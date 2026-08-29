@@ -1,58 +1,144 @@
 ## Goal
 
-Stop forcing the user to bounce between Editor and PDF Preview. Make the **Editor** look exactly like the **PDF Preview** (same paginated A4 layout, gradient cover, accent rails, numbered cards, footer) — but every text block is editable in place. No surprises at export time.
-
-Keep it lean: native `contentEditable` / `<textarea>` overlays on the existing preview layout. No Tiptap, no Lexical, no rich-text framework. The PDF report is plain text in branded layouts — that's all we need.
+Rebrand and repurpose the existing "ROI Sales Companion" application into **AI Buyer** — a premium AI product decision platform — while preserving the existing visual design system, typography, spacing, animations, split-screen auth aesthetic, and premium feel.
 
 ## What changes
 
-### 1. Unify Editor + PDF Preview into one view
+### 1. Branding
 
-- Replace the current form-style editor (`ReportEditor`'s big card with stacked fields) with a paginated WYSIWYG canvas built from the existing `PdfPreview` layout.
-- Each block in the layout becomes inline-editable:
-  - **Cover**: `headline` (h1), `intro` (paragraph), CTA scenario label is read-only (driven by data).
-  - **Page 2**: `exec_summary` (multi-line textarea that grows).
-  - **Page 4**: `why_we_fit[]` — each numbered card is editable, with `+ Add point` and a small × on hover to remove. Drag-handle on each card for reorder (HTML5 DnD, no library).
-  - **Page 5**: `talking_points[]` — same pattern as Why-this-fits. `cta` is editable inside the gradient card.
-- Numeric fields (Investment parameters / Projected returns) stay read-only inside the report — they're driven by the deal in the main app. A small "Edit in deal" link jumps back to the main calculator for those (existing behavior, just made explicit).
+- Replace all "ROI Sales Companion" branding with **AI BUYER**.
+- Tagline: **"Turn product search into confident decisions."**
+- Update `src/routes/__root.tsx` head metadata (title, description, OG/Twitter tags) to AI Buyer.
 
-### 2. Tabs go from 3 → 2
+### 2. Authentication screen
 
-- **Edit** (WYSIWYG paginated — replaces both "Editor" and "PDF preview")
-- **Share** (unchanged)
+Keep the existing split-screen layout and styling, but update copy only.
 
-The `Pages match the exported PDF` strip and "Edit content" jump-link disappear (the editor *is* the preview now). Export PDF button stays in the toolbar.
+**Left side:**
+- Headline: **AI BUYER**
+- Subheadline: **"Don't just search. Decide better."**
+- Supporting text: **"An AI-powered product decision engine that understands your needs, compares real products, and helps you choose."**
+- Keep dark technical background, grid overlay, floating orbs.
 
-### 3. Per-block AI assist stays
+**Right side:**
+- Replace "Welcome back. Pick up where you left off." with **"Welcome to AI Buyer. Make better product decisions."**
+- Keep sign-in / create-account toggle, Google button, email/password fields, and primary CTA styling.
 
-- Each editable block keeps its ✨ icon that opens the existing AI rewrite popover. We just move the trigger to hover-over-block in the paginated layout (top-right corner of each block, fades in on hover, doesn't take page space).
+**Auth behavior:**
+- Use mock authentication (no Supabase, no real backend).
+- On successful sign-in, navigate to `/app`.
 
-### 4. Small editor improvements (only these, no scope creep)
+### 3. AI Buyer workspace (`/app`)
 
-- **Inline add/remove/reorder** for `why_we_fit` and `talking_points` lists.
-- **Overflow warning**: if a block's editable content visibly clips its page area, show a subtle amber chip ("Content overflows page") on that page so the user knows the export will paginate it. Implemented with a `ResizeObserver` comparing content height to page area.
-- **Reset block**: small "↺ Reset" menu item next to ✨ — restores the block from the seeded suggestion (deal/research/template) so an AI rewrite gone wrong isn't a dead end.
-- **Cmd/Ctrl+S** = Save draft, **Cmd/Ctrl+E** = Export PDF. Tiny, but removes friction.
+Create a new route at `src/routes/_authenticated/app.tsx`.
 
-### 5. Things we are explicitly NOT doing
+**Sidebar:**
+- AI BUYER logo/label
+- New Search, Explore, History, Orders, Settings, Profile, Logout
+- Same premium styling as auth screen.
 
-- No rich-text formatting (bold/italic inside text). The PDF renders plain strings — adding rich text would silently lose formatting on export.
-- No Tiptap / Lexical / Slate / ProseMirror. Native editable elements are enough.
-- No second sidebar, no global AI panel, no template/style switcher in the report editor.
-- No editing of numeric calculator fields inside the report editor (they live in the main app, single source of truth).
+**Main area:**
+- Prompt: **"Tell me what you're looking for?"**
+- Large search/chat input with placeholder **"I need Samsung headphones under ₹20,000"**
+- Search button.
 
-## Technical notes
+### 4. Mock AI flow
 
-- `PdfPreview` becomes the shared layout primitive. The editor mode passes `editable={true}` and `onChange` handlers per field; preview mode (used by the share page only) keeps `editable={false}`.
-- Editable text blocks use either `<textarea>` (auto-sizing via `field-sizing: content` with a JS fallback) or `contentEditable` with `onBlur` commit — pick textarea for stability (contentEditable has paste/whitespace quirks that aren't worth fighting).
-- AI assist popover, save logic, and `exportPDF` are untouched — only the editing surface changes.
-- Inspiration repos worth peeking at (for reference, not dependencies): `Mintlify/preview`, `vercel/satori` for layout fidelity, `tldraw/tldraw`'s simple text-box pattern. None get pulled in.
+When the user submits the example request (or any request), show an animated sequence:
+- "Understanding your request..."
+- Samsung ✓, Headphones ✓, Budget ≤ ₹20,000 ✓
+- "Searching products..."
+- "Decision Engine evaluating..."
 
-## Files affected (single file, surgical changes)
+Then transition to recommendations.
 
-- `src/routes/index.tsx`
-  - Generalize `PdfPreview` → `ReportCanvas` with optional `editable` + `onChange` props.
-  - Delete the old form-style editor body in `ReportEditor` and replace with `<ReportCanvas editable onChange={…} />`.
-  - Drop the third tab from the segmented control, update header labels.
-  - Add `+ / × / drag` controls for the two list blocks.
-  - Add overflow `ResizeObserver`, Reset-block action, keyboard shortcut listeners.
+### 5. Recommendations
+
+Render two recommendation cards using the exact mock data below (treated as backend-provided, no frontend calculation):
+
+1. **Samsung Galaxy Buds2 Pro Wireless Earbuds**
+   - ₹17,999
+   - Amazon
+   - Decision Score: 7.61 / 10
+   - Features: Wireless, Noise Cancellation, Samsung
+
+2. **Samsung Galaxy Buds FE True Wireless Earbuds**
+   - ₹19,999
+   - Samsung
+   - Decision Score: 7.58 / 10
+   - Features: Wireless, Noise Cancellation, Samsung
+
+### 6. Decision engine
+
+Each recommendation has an expandable **"Why this product?"** section showing:
+- Samsung brand matched
+- Headphones
+- Within ₹20,000 budget
+- Noise cancellation
+- Decision Score (visually distinct from customer ratings)
+
+### 7. Near-equal notice
+
+Because 7.61 vs 7.58 are close, show:
+- **"These options are very close."**
+- **"Your preference may matter more than the score difference."**
+
+### 8. Selection flow
+
+- Each card has a **Select** button.
+- On selection, show a bottom confirmation bar with product, price, merchant, and **Continue** button.
+- Do not auto-purchase.
+
+### 9. Purchase confirmation modal
+
+- "You selected" + product name, price, merchant
+- Buttons: **Go Back** and **Proceed to Purchase**
+
+### 10. Checkout preview
+
+- Show: Ready for checkout, product, merchant, price, quantity, total
+- Payment status: **Not started**
+- Button: **Continue to Payment**
+- Display **Razorpay Test Mode** (do not implement Razorpay yet)
+
+### 11. Technical architecture
+
+Create TypeScript interfaces in `src/lib/aibuyer/types.ts`:
+- User
+- Requirement
+- ProductCandidate
+- Recommendation
+- DecisionResult
+- RecommendationSession
+- SelectionResult
+- Order
+
+Create mock services in `src/lib/aibuyer/`:
+- `authService.ts`
+- `searchService.ts`
+- `selectionService.ts`
+- `checkoutService.ts`
+
+Rules:
+- No backend, no Supabase, no new database, no Python backend changes.
+- Frontend will later connect to the existing FastAPI backend.
+- Keep existing animation style; add subtle Framer Motion transitions for login → app, search → understanding, understanding → recommendations, card entrance, score appearance, selection, modal, and checkout.
+
+### 12. Things we are explicitly NOT doing
+
+- No e-commerce clone (no cart, no catalog browsing, no real payments).
+- No admin dashboard.
+- No real auth or database.
+- No redesign from scratch — preserve existing visual identity.
+
+## Files affected
+
+- `src/routes/__root.tsx` — update head metadata to AI Buyer.
+- `src/routes/auth.tsx` — rebrand copy, switch to mock auth, redirect to `/app`.
+- `src/lib/aibuyer/types.ts` — new TypeScript interfaces.
+- `src/lib/aibuyer/authService.ts` — new mock auth service.
+- `src/lib/aibuyer/searchService.ts` — new mock search/decision service.
+- `src/lib/aibuyer/selectionService.ts` — new mock selection service.
+- `src/lib/aibuyer/checkoutService.ts` — new mock checkout service.
+- `src/routes/_authenticated/app.tsx` — new AI Buyer workspace route.
+- `src/routeTree.gen.ts` — auto-generated by TanStack Router (do not edit manually).
