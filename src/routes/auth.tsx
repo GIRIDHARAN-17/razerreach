@@ -1,11 +1,9 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { ArrowRight, Loader2, Mail, Lock, Sparkles, TrendingUp, Target, Zap } from "lucide-react";
+import { ArrowRight, Loader2, Mail, Lock, Sparkles } from "lucide-react";
 import { toast } from "sonner";
-import { supabase } from "@/integrations/supabase/client";
-import { lovable } from "@/integrations/lovable";
-import roiBubble from "@/assets/roi-bubble.png";
+import { authService } from "@/lib/aibuyer/authService";
 
 export const Route = createFileRoute("/auth")({
   ssr: false,
@@ -20,16 +18,10 @@ function AuthPage() {
   const [busy, setBusy] = useState(false);
   const [focused, setFocused] = useState<"email" | "password" | null>(null);
 
-  // If already signed in, bounce to the app.
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const { data } = await supabase.auth.getUser();
-      if (!cancelled && data.user) navigate({ to: "/", replace: true });
-    })();
-    return () => {
-      cancelled = true;
-    };
+    if (authService.isAuthenticated()) {
+      navigate({ to: "/app", replace: true });
+    }
   }, [navigate]);
 
   const handleEmailSubmit = async (e: React.FormEvent) => {
@@ -41,22 +33,9 @@ function AuthPage() {
     }
     setBusy(true);
     try {
-      if (mode === "signup") {
-        const { error } = await supabase.auth.signUp({
-          email: email.trim(),
-          password,
-          options: { emailRedirectTo: `${window.location.origin}/` },
-        });
-        if (error) throw error;
-        toast.success("Account created — you're signed in.");
-      } else {
-        const { error } = await supabase.auth.signInWithPassword({
-          email: email.trim(),
-          password,
-        });
-        if (error) throw error;
-      }
-      navigate({ to: "/", replace: true });
+      await authService.signIn(email.trim(), password);
+      toast.success(mode === "signup" ? "Account created — welcome to AI Buyer." : "Welcome back.");
+      navigate({ to: "/app", replace: true });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Authentication failed");
     } finally {
@@ -68,14 +47,11 @@ function AuthPage() {
     if (busy) return;
     setBusy(true);
     try {
-      const result = await lovable.auth.signInWithOAuth("google", {
-        redirect_uri: `${window.location.origin}/`,
-      });
-      if (result.error) throw result.error;
-      if (result.redirected) return; // browser will redirect
-      navigate({ to: "/", replace: true });
+      await authService.signInWithGoogle();
+      navigate({ to: "/app", replace: true });
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Google sign-in failed");
+    } finally {
       setBusy(false);
     }
   };
@@ -84,7 +60,6 @@ function AuthPage() {
     <div className="min-h-screen w-full bg-background text-foreground lg:grid lg:grid-cols-[1.05fr_1fr] xl:grid-cols-[1.15fr_1fr]">
       <ShowcasePanel mode={mode} />
       <div className="relative flex min-h-screen items-center justify-center px-5 py-10 sm:px-8 lg:py-14">
-        {/* subtle ambient orb */}
         <div
           aria-hidden
           className="pointer-events-none absolute -top-24 right-0 h-72 w-72 rounded-full opacity-60 blur-3xl lg:hidden"
@@ -97,16 +72,12 @@ function AuthPage() {
           className="relative z-10 w-full max-w-[420px]"
         >
           <div className="flex items-center gap-3">
-            <motion.img
-              src={roiBubble}
-              alt=""
-              className="size-10 rounded-xl ring-1 ring-border"
-              whileHover={{ rotate: -6, scale: 1.05 }}
-              transition={{ type: "spring", stiffness: 320, damping: 18 }}
-            />
+            <div className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground ring-1 ring-border">
+              <Sparkles className="size-5" />
+            </div>
             <div>
               <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-                ROI SALES COMPANION
+                AI BUYER
               </p>
               <Link to="/" className="text-[11px] text-muted-foreground hover:text-foreground">
                 ← Back home
@@ -147,9 +118,9 @@ function AuthPage() {
             >
               <h1 className="text-balance text-[28px] font-bold leading-[1.1] tracking-tight sm:text-3xl">
                 {mode === "signin" ? (
-                  <>Welcome back.<br /><span className="text-muted-foreground">Pick up where you left off.</span></>
+                  <>Welcome to AI Buyer.<br /><span className="text-muted-foreground">Make better product decisions.</span></>
                 ) : (
-                  <>Start closing<br /><span className="text-muted-foreground">with real numbers.</span></>
+                  <>Start deciding<br /><span className="text-muted-foreground">with confidence.</span></>
                 )}
               </h1>
             </motion.div>
@@ -247,15 +218,13 @@ function AuthPage() {
           </form>
 
           <p className="mt-6 text-[11px] leading-relaxed text-muted-foreground">
-            By continuing you agree to a private, single-user workspace. Your deals and templates stay scoped to your account.
+            By continuing you agree to a private, single-user workspace. Your searches and decisions stay scoped to your account.
           </p>
         </motion.div>
       </div>
     </div>
   );
 }
-
-/* ─────────── Animated input ─────────── */
 
 function Field({
   icon, label, type, value, onChange, autoComplete, minLength, focused, onFocus, onBlur,
@@ -325,15 +294,12 @@ function Field({
   );
 }
 
-/* ─────────── Left showcase panel ─────────── */
-
 function ShowcasePanel({ mode }: { mode: "signin" | "signup" }) {
   return (
     <div
       className="relative hidden overflow-hidden lg:block"
       style={{ background: "var(--gradient-results)" }}
     >
-      {/* Grid overlay */}
       <div
         aria-hidden
         className="absolute inset-0 opacity-[0.18]"
@@ -344,7 +310,6 @@ function ShowcasePanel({ mode }: { mode: "signin" | "signup" }) {
           maskImage: "radial-gradient(120% 80% at 30% 20%, black 30%, transparent 75%)",
         }}
       />
-      {/* Floating orbs */}
       <motion.div
         aria-hidden
         animate={{ y: [0, -18, 0], x: [0, 10, 0] }}
@@ -363,7 +328,7 @@ function ShowcasePanel({ mode }: { mode: "signin" | "signup" }) {
       <div className="relative z-10 flex h-full flex-col justify-between p-10 text-white xl:p-14">
         <div className="flex items-center gap-2">
           <span className="font-mono text-[10px] uppercase tracking-[0.28em] opacity-80">
-            ROI SALES COMPANION
+            AI BUYER
           </span>
         </div>
 
@@ -374,9 +339,9 @@ function ShowcasePanel({ mode }: { mode: "signin" | "signup" }) {
             transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
             className="text-balance text-[44px] font-bold leading-[1.02] tracking-tight xl:text-[56px]"
           >
-            Turn discovery calls
+            Don't just search.
             <br />
-            into <span className="italic text-white/70">defensible</span> ROI.
+            <span className="italic text-white/70">Decide better.</span>
           </motion.h2>
 
           <motion.p
@@ -385,38 +350,16 @@ function ShowcasePanel({ mode }: { mode: "signin" | "signup" }) {
             transition={{ duration: 0.6, delay: 0.1 }}
             className="max-w-md text-[15px] leading-relaxed text-white/65"
           >
-            Powerful sales tool for securing and serving clients.
-
+            An AI-powered product decision engine that understands your needs, compares real products, and helps you choose.
           </motion.p>
-
         </div>
 
         <div className="flex items-center justify-between text-[11px] font-mono uppercase tracking-[0.24em] text-white/45">
           <span>Private workspace</span>
-          <span>RLS · scoped to you</span>
+          <span>Mock auth · demo mode</span>
         </div>
       </div>
     </div>
-  );
-}
-
-function Stat({
-  icon, label, value, delay,
-}: { icon: React.ReactNode; label: string; value: string; delay: number }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 14 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, delay, ease: [0.22, 1, 0.36, 1] }}
-      whileHover={{ y: -3 }}
-      className="rounded-2xl border border-white/10 bg-white/[0.04] p-4 backdrop-blur-sm"
-    >
-      <div className="flex items-center gap-1.5 text-white/55">
-        {icon}
-        <span className="font-mono text-[9px] uppercase tracking-[0.22em]">{label}</span>
-      </div>
-      <div className="mt-2 text-xl font-bold tracking-tight">{value}</div>
-    </motion.div>
   );
 }
 
