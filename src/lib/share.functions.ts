@@ -38,6 +38,22 @@ export const getSharedDeal = createServerFn({ method: "GET" })
       .limit(1)
       .maybeSingle();
 
+    // The logos bucket is private: mint a short-lived signed URL server-side so
+    // the public share page can render the brand logo without the bucket being
+    // world-readable.
+    let brandLogoUrl: string | null = settings?.brand_logo_url ?? null;
+    if (brandLogoUrl) {
+      const marker = "/storage/v1/object/public/logos/";
+      const idx = brandLogoUrl.indexOf(marker);
+      const objectPath = idx >= 0 ? brandLogoUrl.slice(idx + marker.length) : null;
+      if (objectPath) {
+        const { data: signed } = await supabaseAdmin.storage
+          .from("logos")
+          .createSignedUrl(decodeURIComponent(objectPath), 60 * 60);
+        brandLogoUrl = signed?.signedUrl ?? null;
+      }
+    }
+
     // Strip the owner's user_id before returning to the public client.
     const { user_id: _userId, ...publicDeal } = deal;
     return {
@@ -45,7 +61,7 @@ export const getSharedDeal = createServerFn({ method: "GET" })
       template,
       brand: {
         company_name: settings?.company_name ?? "",
-        brand_logo_url: settings?.brand_logo_url ?? null,
+        brand_logo_url: brandLogoUrl,
       },
     } as const;
   });
