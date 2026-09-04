@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.venv/
+
+# Environment Variables & Secrets
+.env
+.env.local
+.env.*
+!.env.example
+*.pem
+*.key
+*.secret
+service-account*.json
+firebase*.json
+credentials*.json
+secrets*.json
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.nox/
+.hypothesis/
+
+# Logs
+*.log
+logs/
+
+# IDE & Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
