@@ -10,7 +10,6 @@ import {
 import { useEffect } from "react";
 import Lenis from "lenis";
 import { Toaster } from "@/components/ui/sonner";
-import { supabase } from "@/integrations/supabase/client";
 
 import appCss from "../styles.css?url";
 
@@ -96,15 +95,14 @@ function RootComponent() {
     return () => { cancelAnimationFrame(id); lenis.destroy(); };
   }, []);
 
-  // Keep router + query cache in sync with auth identity changes.
+  // Keep router in sync with auth initialization.
   useEffect(() => {
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((event) => {
-      if (event !== "SIGNED_IN" && event !== "SIGNED_OUT" && event !== "USER_UPDATED") return;
-      router.invalidate();
-      if (event !== "SIGNED_OUT") queryClient.invalidateQueries();
+    import("@/lib/aibuyer/authService").then(({ authService }) => {
+      authService.waitForAuthInit().then(() => {
+        router.invalidate();
+      });
     });
-    return () => subscription.unsubscribe();
-  }, [router, queryClient]);
+  }, [router]);
 
   return (
     <QueryClientProvider client={queryClient}>

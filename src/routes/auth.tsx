@@ -4,6 +4,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { ArrowRight, Loader2, Mail, Lock, Sparkles } from "lucide-react";
 import { toast } from "sonner";
 import { authService } from "@/lib/aibuyer/authService";
+import { AIBuyerBackground } from "@/components/AIBuyerBackground";
+import { cn } from "@/lib/utils";
 
 export const Route = createFileRoute("/auth")({
   ssr: false,
@@ -13,6 +15,7 @@ export const Route = createFileRoute("/auth")({
 function AuthPage() {
   const navigate = useNavigate();
   const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [selectedRole, setSelectedRole] = useState<"customer" | "merchant">("customer");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
@@ -20,7 +23,14 @@ function AuthPage() {
 
   useEffect(() => {
     if (authService.isAuthenticated()) {
-      navigate({ to: "/app", replace: true });
+      const user = authService.getUser();
+      if (user?.role === "merchant") {
+        navigate({ to: "/merchant", replace: true });
+      } else if (user?.role === "admin") {
+        navigate({ to: "/admin", replace: true });
+      } else {
+        navigate({ to: "/app", replace: true });
+      }
     }
   }, [navigate]);
 
@@ -33,9 +43,25 @@ function AuthPage() {
     }
     setBusy(true);
     try {
-      await authService.signIn(email.trim(), password);
-      toast.success(mode === "signup" ? "Account created — welcome to AI Buyer." : "Welcome back.");
-      navigate({ to: "/app", replace: true });
+      if (mode === "signup") {
+        await authService.signUp(email.trim(), password, selectedRole);
+        toast.success(
+          selectedRole === "merchant"
+            ? "Merchant account created — welcome to RazorReach."
+            : "Customer account created — welcome to RazorReach.",
+        );
+      } else {
+        await authService.signIn(email.trim(), password, selectedRole);
+        toast.success("Welcome back.");
+      }
+      const user = authService.getUser();
+      if (user?.role === "merchant") {
+        navigate({ to: "/merchant", replace: true });
+      } else if (user?.role === "admin") {
+        navigate({ to: "/admin", replace: true });
+      } else {
+        navigate({ to: "/app", replace: true });
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Authentication failed");
     } finally {
@@ -47,12 +73,54 @@ function AuthPage() {
     if (busy) return;
     setBusy(true);
     try {
-      await authService.signInWithGoogle();
-      navigate({ to: "/app", replace: true });
+      await authService.signInWithGoogle(selectedRole);
+      toast.success("Signed in with Google.");
+      const user = authService.getUser();
+      if (user?.role === "merchant") {
+        navigate({ to: "/merchant", replace: true });
+      } else if (user?.role === "admin") {
+        navigate({ to: "/admin", replace: true });
+      } else {
+        navigate({ to: "/app", replace: true });
+      }
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Google sign-in failed");
     } finally {
       setBusy(false);
+    }
+  };
+
+  const handleApple = async () => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await authService.signInWithApple(selectedRole);
+      toast.success("Signed in with Apple.");
+      const user = authService.getUser();
+      if (user?.role === "merchant") {
+        navigate({ to: "/merchant", replace: true });
+      } else if (user?.role === "admin") {
+        navigate({ to: "/admin", replace: true });
+      } else {
+        navigate({ to: "/app", replace: true });
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Apple sign-in failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const handleForgotPassword = async () => {
+    if (!email.trim()) {
+      toast.error("Please enter your email address first.");
+      return;
+    }
+    try {
+      await authService.sendPasswordReset(email.trim());
+      toast.success("Password reset instructions sent to your email.");
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to send reset email.");
     }
   };
 
@@ -63,7 +131,10 @@ function AuthPage() {
         <div
           aria-hidden
           className="pointer-events-none absolute -top-24 right-0 h-72 w-72 rounded-full opacity-60 blur-3xl lg:hidden"
-          style={{ background: "radial-gradient(closest-side, color-mix(in oklab, var(--primary) 22%, transparent), transparent)" }}
+          style={{
+            background:
+              "radial-gradient(closest-side, color-mix(in oklab, var(--primary) 22%, transparent), transparent)",
+          }}
         />
         <motion.div
           initial={{ opacity: 0, y: 14 }}
@@ -71,21 +142,7 @@ function AuthPage() {
           transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
           className="relative z-10 w-full max-w-[420px]"
         >
-          <div className="flex items-center gap-3">
-            <div className="flex size-10 items-center justify-center rounded-xl bg-primary text-primary-foreground ring-1 ring-border">
-              <Sparkles className="size-5" />
-            </div>
-            <div>
-              <p className="font-mono text-[10px] uppercase tracking-[0.22em] text-muted-foreground">
-                AI BUYER
-              </p>
-              <Link to="/" className="text-[11px] text-muted-foreground hover:text-foreground">
-                ← Back home
-              </Link>
-            </div>
-          </div>
-
-          <div className="mt-8 flex items-center gap-1 rounded-full border border-border bg-muted/40 p-1 text-xs font-medium">
+          <div className="flex items-center gap-1 rounded-full border border-border bg-muted/40 p-1 text-xs font-medium">
             {(["signin", "signup"] as const).map((m) => (
               <button
                 key={m}
@@ -100,7 +157,9 @@ function AuthPage() {
                     transition={{ type: "spring", stiffness: 380, damping: 30 }}
                   />
                 )}
-                <span className={`relative ${mode === m ? "text-foreground" : "text-muted-foreground"}`}>
+                <span
+                  className={`relative ${mode === m ? "text-foreground" : "text-muted-foreground"}`}
+                >
                   {m === "signin" ? "Sign in" : "Create account"}
                 </span>
               </button>
@@ -118,26 +177,83 @@ function AuthPage() {
             >
               <h1 className="text-balance text-[28px] font-bold leading-[1.1] tracking-tight sm:text-3xl">
                 {mode === "signin" ? (
-                  <>Welcome to AI Buyer.<br /><span className="text-muted-foreground">Make better product decisions.</span></>
+                  <>
+                    Welcome back.
+                    <br />
+                    <span className="text-muted-foreground">Make better product decisions.</span>
+                  </>
                 ) : (
-                  <>Start deciding<br /><span className="text-muted-foreground">with confidence.</span></>
+                  <>
+                    Start deciding
+                    <br />
+                    <span className="text-muted-foreground">with confidence.</span>
+                  </>
                 )}
               </h1>
             </motion.div>
           </AnimatePresence>
 
-          <motion.button
-            type="button"
-            onClick={handleGoogle}
-            disabled={busy}
-            whileHover={{ y: -1 }}
-            whileTap={{ scale: 0.985 }}
-            className="group mt-7 flex w-full items-center justify-center gap-2.5 rounded-full border border-border bg-card py-3 text-sm font-medium shadow-sm transition-colors hover:bg-muted disabled:opacity-50"
-          >
-            <GoogleMark />
-            <span>Continue with Google</span>
-            <ArrowRight className="size-4 -translate-x-1 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-60" />
-          </motion.button>
+          <div className="mt-6 space-y-1.5">
+            <label className="block text-[10px] font-mono font-semibold uppercase tracking-[0.2em] text-muted-foreground">
+              Choose Your Workspace
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setSelectedRole("customer")}
+                className={cn(
+                  "flex flex-col items-center justify-center rounded-xl border p-2.5 text-center transition-all",
+                  selectedRole === "customer"
+                    ? "border-primary bg-primary/10 text-foreground ring-1 ring-primary"
+                    : "border-border bg-card/60 text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <span className="text-xs font-bold">Customer</span>
+                <span className="text-[10px] opacity-75">Shop smarter with AI</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedRole("merchant")}
+                className={cn(
+                  "flex flex-col items-center justify-center rounded-xl border p-2.5 text-center transition-all",
+                  selectedRole === "merchant"
+                    ? "border-primary bg-primary/10 text-foreground ring-1 ring-primary"
+                    : "border-border bg-card/60 text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <span className="text-xs font-bold">Merchant</span>
+                <span className="text-[10px] opacity-75">Turn demand into revenue</span>
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-5 space-y-3">
+            <motion.button
+              type="button"
+              onClick={handleGoogle}
+              disabled={busy}
+              whileHover={{ y: -1 }}
+              whileTap={{ scale: 0.985 }}
+              className="group flex w-full items-center justify-center gap-2.5 rounded-full border border-border bg-card py-3 text-sm font-medium shadow-sm transition-colors hover:bg-muted disabled:opacity-50"
+            >
+              <GoogleMark />
+              <span>Continue with Google</span>
+              <ArrowRight className="size-4 -translate-x-1 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-60" />
+            </motion.button>
+
+            <motion.button
+              type="button"
+              onClick={handleApple}
+              disabled={busy}
+              whileHover={{ y: -1 }}
+              whileTap={{ scale: 0.985 }}
+              className="group flex w-full items-center justify-center gap-2.5 rounded-full border border-border bg-card py-3 text-sm font-medium shadow-sm transition-colors hover:bg-muted disabled:opacity-50"
+            >
+              <AppleMark />
+              <span>Continue with Apple</span>
+              <ArrowRight className="size-4 -translate-x-1 opacity-0 transition-all group-hover:translate-x-0 group-hover:opacity-60" />
+            </motion.button>
+          </div>
 
           <div className="my-5 flex items-center gap-3 text-[10px] font-mono uppercase tracking-[0.24em] text-muted-foreground">
             <div className="h-px flex-1 bg-border" />
@@ -146,6 +262,7 @@ function AuthPage() {
           </div>
 
           <form onSubmit={handleEmailSubmit} className="space-y-3.5">
+
             <Field
               icon={<Mail className="size-4" />}
               label="Email"
@@ -169,6 +286,18 @@ function AuthPage() {
               onFocus={() => setFocused("password")}
               onBlur={() => setFocused(null)}
             />
+
+            {mode === "signin" && (
+              <div className="flex justify-end pt-0.5">
+                <button
+                  type="button"
+                  onClick={handleForgotPassword}
+                  className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  Forgot password?
+                </button>
+              </div>
+            )}
 
             <motion.button
               type="submit"
@@ -199,7 +328,7 @@ function AuthPage() {
                     className="flex items-center gap-2"
                   >
                     <Loader2 className="size-4 animate-spin" />
-                    Working…
+                    Signing you in…
                   </motion.span>
                 ) : (
                   <motion.span
@@ -218,7 +347,8 @@ function AuthPage() {
           </form>
 
           <p className="mt-6 text-[11px] leading-relaxed text-muted-foreground">
-            By continuing you agree to a private, single-user workspace. Your searches and decisions stay scoped to your account.
+            By continuing you agree to a private, single-user workspace. Your searches and decisions
+            stay scoped to your account.
           </p>
         </motion.div>
       </div>
@@ -227,7 +357,16 @@ function AuthPage() {
 }
 
 function Field({
-  icon, label, type, value, onChange, autoComplete, minLength, focused, onFocus, onBlur,
+  icon,
+  label,
+  type,
+  value,
+  onChange,
+  autoComplete,
+  minLength,
+  focused,
+  onFocus,
+  onBlur,
 }: {
   icon: React.ReactNode;
   label: string;
@@ -267,10 +406,9 @@ function Field({
             animate={{
               y: focused || filled ? -10 : 8,
               scale: focused || filled ? 0.78 : 1,
-              color:
-                focused
-                  ? "color-mix(in oklab, var(--primary) 80%, var(--foreground))"
-                  : "var(--muted-foreground)",
+              color: focused
+                ? "color-mix(in oklab, var(--primary) 80%, var(--foreground))"
+                : "var(--muted-foreground)",
             }}
             transition={{ type: "spring", stiffness: 380, damping: 28 }}
             className="pointer-events-none absolute left-3 top-2.5 origin-left font-mono text-[11px] uppercase tracking-[0.2em]"
@@ -296,41 +434,9 @@ function Field({
 
 function ShowcasePanel({ mode }: { mode: "signin" | "signup" }) {
   return (
-    <div
-      className="relative hidden overflow-hidden lg:block"
-      style={{ background: "var(--gradient-results)" }}
-    >
-      <div
-        aria-hidden
-        className="absolute inset-0 opacity-[0.18]"
-        style={{
-          backgroundImage:
-            "linear-gradient(to right, rgba(255,255,255,0.18) 1px, transparent 1px), linear-gradient(to bottom, rgba(255,255,255,0.18) 1px, transparent 1px)",
-          backgroundSize: "56px 56px",
-          maskImage: "radial-gradient(120% 80% at 30% 20%, black 30%, transparent 75%)",
-        }}
-      />
-      <motion.div
-        aria-hidden
-        animate={{ y: [0, -18, 0], x: [0, 10, 0] }}
-        transition={{ duration: 11, repeat: Infinity, ease: "easeInOut" }}
-        className="absolute -left-16 top-24 size-72 rounded-full blur-3xl"
-        style={{ background: "color-mix(in oklab, var(--primary) 55%, transparent)" }}
-      />
-      <motion.div
-        aria-hidden
-        animate={{ y: [0, 22, 0], x: [0, -14, 0] }}
-        transition={{ duration: 14, repeat: Infinity, ease: "easeInOut" }}
-        className="absolute bottom-12 right-0 size-80 rounded-full blur-3xl"
-        style={{ background: "color-mix(in oklab, var(--metric-accent) 40%, transparent)" }}
-      />
-
+    <AIBuyerBackground className="hidden lg:block">
       <div className="relative z-10 flex h-full flex-col justify-between p-10 text-white xl:p-14">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[10px] uppercase tracking-[0.28em] opacity-80">
-            AI BUYER
-          </span>
-        </div>
+        <div />
 
         <div className="space-y-10">
           <motion.h2
@@ -339,9 +445,9 @@ function ShowcasePanel({ mode }: { mode: "signin" | "signup" }) {
             transition={{ duration: 0.7, ease: [0.22, 1, 0.36, 1] }}
             className="text-balance text-[44px] font-bold leading-[1.02] tracking-tight xl:text-[56px]"
           >
-            Don't just search.
+            Search redefined.
             <br />
-            <span className="italic text-white/70">Decide better.</span>
+            <span className="italic text-white">Decisions simplified.</span>
           </motion.h2>
 
           <motion.p
@@ -350,16 +456,17 @@ function ShowcasePanel({ mode }: { mode: "signin" | "signup" }) {
             transition={{ duration: 0.6, delay: 0.1 }}
             className="max-w-md text-[15px] leading-relaxed text-white/65"
           >
-            An AI-powered product decision engine that understands your needs, compares real products, and helps you choose.
+            An AI-powered product decision engine that understands your needs, compares real
+            products, and helps you choose.
           </motion.p>
         </div>
 
         <div className="flex items-center justify-between text-[11px] font-mono uppercase tracking-[0.24em] text-white/45">
           <span>Private workspace</span>
-          <span>Mock auth · demo mode</span>
+          <span>RazorReach Platform</span>
         </div>
       </div>
-    </div>
+    </AIBuyerBackground>
   );
 }
 
@@ -382,6 +489,14 @@ function GoogleMark() {
         fill="#EA4335"
         d="M12 4.75c1.76 0 3.34.61 4.58 1.8l3.43-3.43C17.95 1.19 15.23 0 12 0 7.31 0 3.28 2.7 1.3 6.41l4.02 3.09C6.26 6.85 8.89 4.75 12 4.75z"
       />
+    </svg>
+  );
+}
+
+function AppleMark() {
+  return (
+    <svg viewBox="0 0 24 24" className="size-4 fill-current" aria-hidden="true">
+      <path d="M18.71 19.5c-.83 1.24-1.71 2.45-3.05 2.47-1.34.03-1.77-.79-3.29-.79-1.53 0-2 .77-3.27.82-1.31.05-2.3-1.32-3.14-2.53C4.25 17 2.94 12.45 4.7 9.39c.87-1.52 2.43-2.48 4.12-2.51 1.28-.02 2.5.87 3.29.87.78 0 2.26-1.07 3.81-.91.65.03 2.47.26 3.64 1.98-.09.06-2.17 1.28-2.15 3.81.03 3.02 2.65 4.03 2.68 4.04-.03.07-.42 1.44-1.38 2.83M15.97 6.35c.66-.8 1.11-1.92.99-3.04-.96.04-2.13.64-2.81 1.44-.61.71-1.14 1.86-1 2.97 1.08.08 2.17-.57 2.82-1.37z" />
     </svg>
   );
 }

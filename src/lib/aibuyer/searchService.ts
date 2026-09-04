@@ -1,85 +1,149 @@
+import { apiClient } from "../api/client";
+import { sessionService } from "./sessionService";
 import type {
   Requirement,
   RecommendationSession,
   Recommendation,
-  ProductCandidate,
-  DecisionResult,
+  ResponseMode,
+  AISearchApiResponse,
 } from "./types";
 
-const MOCK_PRODUCTS: ProductCandidate[] = [
-  {
-    id: "samsung-buds2-pro",
-    name: "Samsung Galaxy Buds2 Pro Wireless Earbuds",
-    price: 17999,
-    currency: "₹",
-    merchant: "Amazon",
-    features: ["Wireless", "Noise Cancellation", "Samsung"],
-    brand: "Samsung",
-    category: "Headphones",
-  },
-  {
-    id: "samsung-buds-fe",
-    name: "Samsung Galaxy Buds FE True Wireless Earbuds",
-    price: 19999,
-    currency: "₹",
-    merchant: "Samsung",
-    features: ["Wireless", "Noise Cancellation", "Samsung"],
-    brand: "Samsung",
-    category: "Headphones",
-  },
-];
-
-function parseRequirement(query: string): Requirement {
-  const normalized = query.toLowerCase();
-  const brand = normalized.includes("samsung") ? "Samsung" : undefined;
-  const category = normalized.includes("headphones") || normalized.includes("earbuds") ? "Headphones" : undefined;
-  const budgetMatch = normalized.match(/under\s*[₹$]?\s*(\d[\d,]*)/);
-  const parsedMaxBudget = budgetMatch ? Number(budgetMatch[1].replace(/,/g, "")) : undefined;
-  return {
-    id: `req-${Date.now()}`,
-    text: query,
-    parsedBrand: brand,
-    parsedCategory: category,
-    parsedMaxBudget,
-    currency: "₹",
-  };
-}
-
-function evaluateDecision(product: ProductCandidate, requirement: Requirement): DecisionResult {
-  const reasons: string[] = [];
-  if (requirement.parsedBrand && product.brand.toLowerCase() === requirement.parsedBrand.toLowerCase()) {
-    reasons.push(`${product.brand} brand matched`);
-  }
-  if (requirement.parsedCategory) {
-    reasons.push(requirement.parsedCategory);
-  }
-  if (requirement.parsedMaxBudget && product.price <= requirement.parsedMaxBudget) {
-    reasons.push(`Within ${requirement.currency}${requirement.parsedMaxBudget.toLocaleString()} budget`);
-  }
-  if (product.features.some((f) => f.toLowerCase().includes("noise cancellation"))) {
-    reasons.push("Noise cancellation");
-  }
-
-  const score = product.id === "samsung-buds2-pro" ? 7.61 : 7.58;
-  return { score, maxScore: 10, reasons };
+export interface SearchTurnResult {
+  sessionId: string;
+  message: string;
+  responseMode: ResponseMode;
+  recommendations: Recommendation[];
+  requirement?: Requirement;
+  status: "success" | "clarification_needed" | "no_match" | "fallback" | "error";
+  question?: string | null;
 }
 
 export const searchService = {
-  submitQuery: async (query: string): Promise<RecommendationSession> => {
-    await new Promise((resolve) => setTimeout(resolve, 2200));
-    const requirement = parseRequirement(query);
-    const recommendations: Recommendation[] = MOCK_PRODUCTS.map((product, index) => ({
-      id: `rec-${product.id}`,
-      product,
-      decision: evaluateDecision(product, requirement),
-      rank: index + 1,
-    }));
+  /**
+   * Send chat query to the stateful Buyer Agent (/api/ai/search).
+   * Passes session_id and captures backend response_mode and grounded products.
+   */
+  sendChatMessage: async (
+    query: string,
+    existingSessionId?: string
+  ): Promise<SearchTurnResult> => {
+    const sessionIdToSend = existingSessionId || sessionService.getSessionId() || undefined;
+
+    const requestData: Record<string, any> = {
+      message: query.trim(),
+    };
+    if (sessionIdToSend) {
+      requestData.session_id = sessionIdToSend;
+    }
+
+    try {
+      const data = await apiClient<AISearchApiResponse>("/ai/search", {
+        method: "POST",
+        data: requestData,
+      });
+
+      const backendSessionId = data.session_id || sessionIdToSend || `sess-${Date.now()}`;
+      sessionService.setSessionId(backendSessionId);
+
+      const responseMode = data.response_mode || "AI";
+      const intent = data.intent || {};
+
+      const requirement: Requirement = {
+        id: `req-${Date.now()}`,
+        text: query,
+        parsedBrand: intent.brand,
+        parsedCategory: intent.category,
+        parsedMaxBudget: intent.max_price,
+        currency: "INR",
+      };
+
+      const recommendations: Recommendation[] = (data.products || []).map(
+        (rec: any, index: number) => ({
+          id: rec.id || `rec-${index}`,
+          product: {
+            id: rec.id || `cand-${index}`,
+            name: rec.name || "Product",
+            price: rec.price !== undefined ? Number(rec.price) : null,
+            currency: rec.currency || "INR",
+            merchant: rec.merchant_name || rec.merchant || "RazorReach Store",
+            features: rec.why_recommended || [],
+            brand: intent.brand || "Catalog",
+            category: rec.category || intent.category || "",
+            imageUrl: rec.image_url || (rec.images && rec.images[0]) || null,
+            images: rec.images || (rec.image_url ? [rec.image_url] : []),
+          },
+          decision: {
+            score: rec.score || (10 - index),
+            maxScore: 10,
+            reasons: rec.why_recommended || ["Matched search criteria"],
+            evidence: [],
+          },
+          rank: index + 1,
+        })
+      );
+
+      let turnStatus: "success" | "clarification_needed" | "no_match" | "fallback" | "error" = "success";
+      if (responseMode === "CLARIFICATION") {
+        turnStatus = "clarification_needed";
+      } else if (recommendations.length === 0) {
+        turnStatus = "no_match";
+      } else if (responseMode === "DETERMINISTIC_FALLBACK") {
+        turnStatus = "fallback";
+      }
+
+      return {
+        sessionId: backendSessionId,
+        message: data.message || "Here are your recommendations.",
+        responseMode,
+        recommendations,
+        requirement,
+        status: turnStatus,
+        question: responseMode === "CLARIFICATION" ? data.message : null,
+      };
+    } catch (error: any) {
+      console.warn("AI Search API error / fallback triggered:", error);
+      const activeSessionId = sessionIdToSend || sessionService.getSessionId() || `sess-${Date.now()}`;
+
+      // Graceful fallback state without exposing raw traces
+      return {
+        sessionId: activeSessionId,
+        message: "I can still help you search our catalog and manage your cart.",
+        responseMode: "DETERMINISTIC_FALLBACK",
+        recommendations: [],
+        status: "fallback",
+        question: null,
+      };
+    }
+  },
+
+  /**
+   * Backward-compatible submitQuery returning RecommendationSession
+   */
+  submitQuery: async (
+    query: string,
+    existingSessionId?: string
+  ): Promise<RecommendationSession> => {
+    const result = await searchService.sendChatMessage(query, existingSessionId);
+
+    const requirement: Requirement = result.requirement || {
+      id: `req-${Date.now()}`,
+      text: query,
+      currency: "INR",
+    };
+
+    const conversation = [
+      { role: "user", content: query },
+      { role: "assistant", content: result.message },
+    ];
 
     return {
-      id: `session-${Date.now()}`,
+      id: result.sessionId,
       query,
+      status: result.status,
       requirement,
-      recommendations,
+      recommendations: result.recommendations,
+      question: result.question,
+      conversation,
       createdAt: new Date().toISOString(),
     };
   },

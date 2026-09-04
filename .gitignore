@@ -10,6 +10,8 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+build
+coverage
 .output
 .vinxi
 .tanstack/**
@@ -19,6 +21,16 @@ dist-ssr
 # Wrangler / Cloudflare
 .wrangler/
 .dev.vars
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.secret
+service-account*.json
+firebase*.json
+credentials*.json
+secrets*.json
 
 # Editor directories and files
 .vscode/*
@@ -30,3 +42,4 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+

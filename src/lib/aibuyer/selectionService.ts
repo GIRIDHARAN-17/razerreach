@@ -1,3 +1,4 @@
+import { apiClient } from "../api/client";
 import type { Recommendation, SelectionResult } from "./types";
 
 export const selectionService = {
@@ -6,7 +7,7 @@ export const selectionService = {
     recommendation: Recommendation,
     quantity = 1
   ): Promise<SelectionResult> => {
-    await new Promise((resolve) => setTimeout(resolve, 400));
+    // Non-destructive selection: records selection without mutating or wiping user cart
     return {
       sessionId,
       recommendationId: recommendation.id,
