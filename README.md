@@ -385,8 +385,3 @@ razopay_buildathon_track1/
 - **524 Backend Tests Passing**: 100% test coverage across Policy Gate, FSM state machine, AI fallback resilience, webhook HMAC verification, idempotency replay protection, and social auth.
 - **Frontend Production Bundle**: Compiles with zero errors via Vite 7.
 - **Zero Secrets Committed**: All API keys, database credentials, and webhook secrets are configured strictly through environment variables.
-
-##Deployed
-Frontend: https://razorreach.vercel.app
-Backend: https://razerreach.onrender.com
-API Docs: https://razerreach.onrender.com/docs
