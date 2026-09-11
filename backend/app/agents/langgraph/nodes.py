@@ -16,7 +16,7 @@ from app.agents.tools.buyer_tools import (
     tool_compare_products,
     tool_check_inventory,
 )
-from app.agents.buyer_agent import _build_recommended_products, verify_selected_product
+from app.agents.buyer_agent import _build_recommended_products, build_no_exact_match_message, verify_selected_product
 from app.integrations import gemini
 from app.schemas.agent_decision import (
     AgentAction,
@@ -39,7 +39,7 @@ from app.services.agent_fsm import can_transition, transition_state
 from app.services.agent_session_service import get_or_create_agent_session, save_agent_session_atomic
 from app.services.analytics_service import record_search_event
 from app.services.audit_service import record_audit_event
-from app.services.cart_service import add_item, get_active_cart, remove_item, update_item
+from app.services.ai_resilience import sanitize_user_response
 from app.agents.langgraph.state import BuyerGraphState
 
 logger = logging.getLogger("razorreach.langgraph.nodes")
@@ -72,10 +72,19 @@ async def node_load_state(state: BuyerGraphState, config: Optional[RunnableConfi
         if can_transition(agent_state.current_state, AgentStateEnum.START):
             transition_state(agent_state, AgentStateEnum.START, reason=TransitionReason.SESSION_RESET)
 
+    from app.schemas.ai_search import IntentRelation
     from app.services.ai_resilience import is_fallback_used, deterministic_search_intent
     extracted_intent = deterministic_search_intent(message, previous_intent=agent_state.intent)
     effective_intent = state.get("previous_intent") or extracted_intent
     agent_state.intent = effective_intent
+
+    # On NEW_INTENT relation: reset stale shopping context while preserving cart & session
+    if getattr(effective_intent, "intent_relation", None) == IntentRelation.NEW_INTENT:
+        agent_state.candidate_product_ids = []
+        agent_state.selected_product_id = None
+        agent_state.comparison_product_ids = []
+        agent_state.last_referenced_product_id = None
+        agent_state.preference_context = {}
 
     # Maintain preference_context in AgentState
     if agent_state.preference_context is None:
@@ -327,7 +336,7 @@ async def node_ask_clarification(state: BuyerGraphState, config: Optional[Runnab
         pass
 
     return {
-        "final_message": question,
+        "final_message": sanitize_user_response(question, default_fallback="Could you please clarify your shopping preferences?"),
         "is_terminal": True,
         "requires_clarification": True,
     }
@@ -384,6 +393,8 @@ async def node_safe_response(state: BuyerGraphState) -> Dict[str, Any]:
     else:
         safe_msg = "I cannot perform that action directly."
 
+    safe_msg = sanitize_user_response(safe_msg, default_fallback="I cannot perform that action directly.")
+
     return {
         "final_message": safe_msg,
         "is_terminal": True,
@@ -433,6 +444,7 @@ async def node_execute_tool(state: BuyerGraphState, config: Optional[RunnableCon
             candidate_ids = [p.id for p in recommended_products]
             agent_state.candidate_product_ids = candidate_ids[:10]
             agent_state.last_referenced_product_id = candidate_ids[0] if candidate_ids else None
+            agent_state.selected_product_id = None
             agent_state.last_tool_result_summary = f"Found {len(recommended_products)} products"
 
             try:
@@ -443,7 +455,7 @@ async def node_execute_tool(state: BuyerGraphState, config: Optional[RunnableCon
             if recommended_products:
                 final_message = f"Found {len(recommended_products)} product{'s' if len(recommended_products) > 1 else ''} matching your request."
             else:
-                final_message = "I couldn't find a matching product in the current catalog."
+                final_message = build_no_exact_match_message(effective_intent)
         except Exception as e:
             logger.error(f"Search tool execution failed: {type(e).__name__}")
             if can_transition(agent_state.current_state, AgentStateEnum.FAILED):
@@ -677,6 +689,7 @@ async def node_deterministic_fallback(state: BuyerGraphState, config: Optional[R
     candidate_ids = [p.id for p in recommended_products]
     agent_state.candidate_product_ids = candidate_ids[:10]
     agent_state.last_referenced_product_id = candidate_ids[0] if candidate_ids else None
+    agent_state.selected_product_id = None
     agent_state.last_tool_result_summary = f"Fallback found {len(recommended_products)} products"
 
     try:
@@ -697,9 +710,11 @@ async def node_deterministic_fallback(state: BuyerGraphState, config: Optional[R
     except Exception:
         pass
 
+    final_msg = f"Found {len(recommended_products)} products matching your search criteria." if recommended_products else build_no_exact_match_message(intent)
+
     return {
         "recommended_products": recommended_products,
-        "final_message": f"Found {len(recommended_products)} products matching your search criteria.",
+        "final_message": final_msg,
         "is_terminal": True,
         "fallback_active": True,
     }

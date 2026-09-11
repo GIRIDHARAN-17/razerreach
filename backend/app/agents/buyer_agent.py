@@ -95,6 +95,35 @@ def build_grounded_reasons(product: Dict[str, Any], intent: SearchIntent) -> Lis
     return reasons
 
 
+def build_no_exact_match_message(intent: SearchIntent) -> str:
+    """Build grounded, friendly NO_EXACT_MATCH message without recommending non-matching items."""
+    parts = []
+    if intent.color:
+        parts.append(intent.color.title())
+    if intent.brand:
+        parts.append(intent.brand.title())
+    if intent.category:
+        parts.append(intent.category.lower())
+    else:
+        parts.append("product")
+
+    descr = " ".join(parts)
+
+    price_str = ""
+    if intent.max_price is not None and intent.min_price is not None:
+        price_str = f" priced between ₹{int(intent.min_price):,} and ₹{int(intent.max_price):,}"
+    elif intent.max_price is not None:
+        price_str = f" under ₹{int(intent.max_price):,}"
+    elif intent.min_price is not None:
+        price_str = f" above ₹{int(intent.min_price):,}"
+
+    feat_str = ""
+    if intent.required_features:
+        feat_str = f" with {', '.join(intent.required_features)}"
+
+    return f"I couldn't find an exact match for {descr}{price_str}{feat_str}. Would you like me to show close alternatives?"
+
+
 async def _build_recommended_products(
     db,
     raw_products: List[Dict[str, Any]],
@@ -341,6 +370,7 @@ async def process_buyer_query(
             if can_transition(state.current_state, AgentStateEnum.UNDERSTANDING):
                 transition_state(state, AgentStateEnum.UNDERSTANDING, reason=TransitionReason.USER_INTENT_PARSED)
 
+            from app.schemas.ai_search import IntentRelation
             # Extract structured intent
             try:
                 effective_intent = await gemini.extract_search_intent(message, effective_intent)
@@ -348,8 +378,23 @@ async def process_buyer_query(
             except RuntimeError:
                 raise
             except Exception:
-                effective_intent = SearchIntent(search_text=message.strip().lower())
+                from app.services.ai_resilience import deterministic_search_intent
+                effective_intent = deterministic_search_intent(message, previous_intent=state.intent)
                 state.intent = effective_intent
+
+            if getattr(effective_intent, "intent_relation", None) == IntentRelation.NEW_INTENT:
+                state.candidate_product_ids = []
+                state.selected_product_id = None
+                state.comparison_product_ids = []
+                state.last_referenced_product_id = None
+                state.preference_context = {}
+
+            if getattr(effective_intent, "intent_relation", None) == IntentRelation.AMBIGUOUS:
+                state.pending_action = "ASK_CLARIFICATION"
+                state.last_tool = "ask_clarification"
+                cat_disp = (effective_intent.category or "product").strip()
+                final_message = f"Are you looking for a {cat_disp} for college, or another type of product?"
+                break
 
             if can_transition(state.current_state, AgentStateEnum.SEARCHING):
                 transition_state(state, AgentStateEnum.SEARCHING, reason=TransitionReason.SEARCH_STARTED)
@@ -367,12 +412,13 @@ async def process_buyer_query(
                 candidate_ids = [p.id for p in recommended_products]
                 state.candidate_product_ids = candidate_ids[:10]
                 state.last_referenced_product_id = candidate_ids[0] if candidate_ids else None
+                state.selected_product_id = None
                 state.last_tool_result_summary = f"Found {len(recommended_products)} products"
 
                 if recommended_products:
                     final_message = f"Found {len(recommended_products)} product{'s' if len(recommended_products) > 1 else ''} matching your request."
                 else:
-                    final_message = "I couldn't find a matching product in the current catalog."
+                    final_message = build_no_exact_match_message(effective_intent)
             except Exception as e:
                 logger.error(f"Search tool execution failed: {type(e).__name__}")
                 if can_transition(state.current_state, AgentStateEnum.FAILED):
@@ -644,13 +690,15 @@ async def process_buyer_query(
     else:
         response_mode = "AI"
 
+    from app.services.ai_resilience import sanitize_user_response
+
     if not final_message:
         if recommended_products:
             final_message = f"Found {len(recommended_products)} product{'s' if len(recommended_products) > 1 else ''} matching your request."
-        elif state.last_tool_result_summary:
-            final_message = state.last_tool_result_summary
         else:
-            final_message = "I couldn't find matching products in the catalog."
+            final_message = "How else can I assist with your shopping today?"
+
+    final_message = sanitize_user_response(final_message)
 
     return AISearchResponse(
         session_id=state.session_id,

@@ -388,10 +388,12 @@ KNOWN_COLORS = {
 }
 
 KNOWN_CATEGORIES = {
+    "laptop stands": ["laptop stand", "laptop stands", "desk stand", "riser"],
+    "laptops": ["laptop", "laptops", "notebook", "ultrabook"],
+    "shoes": ["shoe", "shoes", "sneaker", "sneakers", "footwear"],
     "backpacks": ["backpack", "backpacks", "bag", "bags", "rucksack"],
-    "laptop stands": ["stand", "stands", "laptop stand", "desk stand", "riser"],
     "electronics": ["mouse", "keyboard", "cable", "charger", "adapter", "usb", "headphone", "earphone"],
-    "apparel": ["shirt", "t-shirt", "tshirt", "hoodie", "pants", "shoes", "jacket"],
+    "apparel": ["shirt", "t-shirt", "tshirt", "hoodie", "pants", "jacket"],
 }
 
 STOP_WORDS = {
@@ -470,6 +472,14 @@ def deterministic_search_intent(
             color = c
             break
 
+    # 2.5 Brand extraction
+    brand: Optional[str] = None
+    known_brands = {"adidas", "nike", "puma", "reebok", "novatech", "titantech", "aerotech", "gameforge", "workmate", "sprintmax", "urbanstep", "trailpro", "courtflex", "classicwalk", "urbanwear", "activewear", "premiumwear", "streetstyle", "trendzone"}
+    for b in known_brands:
+        if re.search(rf"\b{b}\b", msg_lower):
+            brand = b
+            break
+
     # 3. Category extraction
     category: Optional[str] = None
     for cat_name, keywords in KNOWN_CATEGORIES.items():
@@ -518,44 +528,170 @@ def deterministic_search_intent(
     words = [w for w in clean_text.split() if w not in STOP_WORDS and w not in NAV_FILTER_WORDS and len(w) > 1]
     search_text = " ".join(words).strip() if words else msg_lower.strip()
 
-    # 7. Merge with previous intent ONLY if query is an active refinement
-    if previous_intent:
-        is_refinement = any(k in msg_lower for k in [
-            "cheaper", "cheapest", "under", "below", "above", "more", "color",
-            "black", "white", "blue", "sort", "filter", "another", "options",
-            "different", "first", "second", "one", "also", "instead", "refine",
-            "coding", "gaming", "college", "work", "office", "study", "portability", "performance"
-        ]) or (previous_intent.category is not None)
-
-        if is_refinement:
-            if not search_text or search_text in ("products", "items"):
-                search_text = previous_intent.search_text or search_text
-            category = category or previous_intent.category
-            color = color or previous_intent.color
-            use_case = use_case or getattr(previous_intent, "use_case", None)
-            if previous_intent.preferences:
-                merged_prefs = dict(previous_intent.preferences)
-                merged_prefs.update(preferences)
-                preferences = merged_prefs
-            if min_price is None and previous_intent.min_price is not None:
-                min_price = previous_intent.min_price
-            if max_price is None and previous_intent.max_price is not None:
-                max_price = previous_intent.max_price
-            if previous_intent.required_features:
-                for f in previous_intent.required_features:
-                    if f not in required_features:
-                        required_features.append(f)
-
-    return SearchIntent(
+    # Form raw extracted intent
+    raw_intent = SearchIntent(
         search_text=search_text or "products",
         category=category,
         color=color,
+        brand=brand,
         min_price=min_price,
         max_price=max_price,
         use_case=use_case,
         preferences=preferences,
         required_features=required_features,
         sort=sort,
+    )
+
+    if previous_intent:
+        relation = classify_intent_relation(message, previous_intent)
+        return merge_search_intent(previous_intent, raw_intent, relation)
+
+    return raw_intent
+
+
+from app.schemas.ai_search import IntentRelation
+
+
+def classify_intent_relation(
+    message: str,
+    previous_intent: Optional[SearchIntent] = None,
+) -> IntentRelation:
+    """
+    Deterministically classifies intent relation relative to previous conversation state:
+    - REFINEMENT: Continuing or refining active shopping goal.
+    - NEW_INTENT: Starting a new, distinct shopping goal.
+    - AMBIGUOUS: Could refer to active goal or a new goal.
+    """
+    if not previous_intent or not (previous_intent.category or previous_intent.search_text):
+        return IntentRelation.NEW_INTENT
+
+    msg_raw = message.strip()
+    msg_lower = msg_raw.lower()
+
+    # 1. Explicit Reset / Shift Phrases
+    reset_phrases = [
+        "forget that", "forget it", "nevermind", "start over", "switch to",
+        "different product", "actually, show me", "actually show me",
+        "actually i need", "actually, i need", "instead of", "not that",
+        "show me something else", "look at"
+    ]
+    if any(p in msg_lower for p in reset_phrases):
+        return IntentRelation.NEW_INTENT
+
+    # 2. Check for Target Category / Product Shift
+    prev_cat = (previous_intent.category or "").strip().lower()
+
+    # Special check: Laptop computer -> Laptop stand / bag / sleeve / charger / table / accessory
+    if prev_cat in ("laptop", "laptops", "notebook", "ultrabook", "computer"):
+        accessory_keywords = [
+            "stand", "stands", "bag", "bags", "sleeve", "sleeves", "case", "cases",
+            "charger", "chargers", "mouse", "keyboard", "cable", "cables", "adapter",
+            "adapters", "mount", "mounts", "cooler", "coolers", "pad", "pads",
+            "table", "tables", "skin", "skins", "accessory", "accessories"
+        ]
+        if any(re.search(rf"\b{kw}\b", msg_lower) for kw in accessory_keywords):
+            return IntentRelation.NEW_INTENT
+
+    # General category shift check
+    for cat_key, keywords in KNOWN_CATEGORIES.items():
+        if any(re.search(rf"\b{kw}\b", msg_lower) for kw in keywords):
+            if prev_cat and (prev_cat == cat_key or cat_key.rstrip('s') in prev_cat or prev_cat.rstrip('s') in cat_key):
+                pass
+            else:
+                return IntentRelation.NEW_INTENT
+
+    # 3. Ambiguous follow-ups without category or refinement markers
+    ambiguous_phrases = [
+        "something for college", "need something for college", "for college",
+        "something for travel", "for travel", "something for work", "anything for college"
+    ]
+    has_refinement_marker = any(k in msg_lower for k in [
+        "under", "below", "above", "over", "max", "min", "budget", "cheaper", "cheapest",
+        "expensive", "premium", "price", "color", "black", "white", "blue", "red", "green",
+        "silver", "gray", "grey", "gold", "brown", "make it", "wireless", "bluetooth",
+        "usb-c", "ram", "ssd", "gb", "first", "second", "third", "last", "this", "that",
+        "lighter", "portable", "portability", "performance", "my budget is"
+    ])
+    if any(phrase in msg_lower for phrase in ambiguous_phrases) and not has_refinement_marker:
+        return IntentRelation.AMBIGUOUS
+
+    # 4. Check for Clear Refinement Markers
+    refinement_keywords = [
+        "under", "below", "above", "over", "max", "min", "budget", "cheaper", "cheapest",
+        "expensive", "premium", "price", "color", "black", "white", "blue", "red", "green",
+        "silver", "gray", "grey", "gold", "brown", "make it", "change to", "switch color",
+        "wireless", "bluetooth", "usb-c", "ram", "ssd", "gb", "first", "second", "third",
+        "last", "this", "that", "other", "lighter", "portable", "portability", "performance",
+        "faster", "power", "speed", "coding", "gaming", "work", "office", "study", "travel",
+        "my budget is", "for coding", "for gaming", "for study", "for work", "not black",
+        "don't care", "dont care", "forget the brand", "forget brand", "forget budget"
+    ]
+    if any(re.search(rf"\b{re.escape(k)}\b", msg_lower) or k in msg_lower for k in refinement_keywords):
+        return IntentRelation.REFINEMENT
+
+    return IntentRelation.REFINEMENT
+
+
+def merge_search_intent(
+    previous_intent: Optional[SearchIntent],
+    current_intent: SearchIntent,
+    relation: IntentRelation,
+) -> SearchIntent:
+    """
+    Controlled SearchIntent merger:
+    - REFINEMENT: Merge current intent into previous intent with constraint replacement support.
+    - NEW_INTENT: Return current intent without carrying over stale constraints.
+    - AMBIGUOUS: Return previous intent marked as AMBIGUOUS without mutating context.
+    """
+    if relation == IntentRelation.NEW_INTENT or not previous_intent:
+        current_intent.intent_relation = IntentRelation.NEW_INTENT
+        return current_intent
+
+    if relation == IntentRelation.AMBIGUOUS:
+        prev_copy = previous_intent.model_copy(deep=True)
+        prev_copy.intent_relation = IntentRelation.AMBIGUOUS
+        return prev_copy
+
+    # REFINEMENT
+    merged_category = current_intent.category or previous_intent.category
+
+    # Explicit replacement for min_price & max_price
+    merged_min_price = current_intent.min_price if current_intent.min_price is not None else previous_intent.min_price
+    merged_max_price = current_intent.max_price if current_intent.max_price is not None else previous_intent.max_price
+
+    # Explicit replacement or negation for color
+    merged_color = current_intent.color if current_intent.color is not None else previous_intent.color
+
+    # Explicit replacement or removal for brand
+    merged_brand = current_intent.brand if current_intent.brand is not None else previous_intent.brand
+
+    # Use case & preferences
+    merged_use_case = current_intent.use_case or previous_intent.use_case
+    merged_prefs = dict(previous_intent.preferences or {})
+    if current_intent.preferences:
+        merged_prefs.update(current_intent.preferences)
+
+    # Required features
+    merged_features = list(previous_intent.required_features or [])
+    if current_intent.required_features:
+        for f in current_intent.required_features:
+            if f not in merged_features:
+                merged_features.append(f)
+
+    merged_text = current_intent.search_text if current_intent.search_text and current_intent.search_text != "products" else (previous_intent.search_text or "products")
+
+    return SearchIntent(
+        search_text=merged_text,
+        category=merged_category,
+        color=merged_color,
+        brand=merged_brand,
+        min_price=merged_min_price,
+        max_price=merged_max_price,
+        use_case=merged_use_case,
+        preferences=merged_prefs,
+        required_features=merged_features,
+        sort=current_intent.sort if current_intent.sort != SearchSort.RELEVANCE else previous_intent.sort,
+        intent_relation=IntentRelation.REFINEMENT,
     )
 
 
@@ -571,6 +707,15 @@ def evaluate_preference_sufficiency(
     Returns tuple: (is_sufficient: bool, missing_field: Optional[str], clarification_question: Optional[str])
     """
     msg_lower = message.strip().lower()
+
+    # Rule -1: Ambiguous intent relation requires concise clarification!
+    if getattr(intent, "intent_relation", None) == IntentRelation.AMBIGUOUS:
+        cat_disp = (intent.category or "product").strip()
+        return (
+            False,
+            "ambiguous_intent",
+            f"Are you looking for a {cat_disp} for college, or another type of product?",
+        )
 
     # Rule 0: If clarification limit reached (>= 3), proceed with search using whatever info we have!
     if clarification_count >= 3:
@@ -790,3 +935,65 @@ def deterministic_agent_decision(
         response_intent="search_products",
     )
 
+
+INTERNAL_SYSTEM_PATTERNS = [
+    r"\bthe user\b",
+    r"\breiterated\b",
+    r"\bappropriate action\b",
+    r"\bsearch intent\b",
+    r"\bintent relation\b",
+    r"\bfsm\b",
+    r"\blanggraph\b",
+    r"\bpolicy gate\b",
+    r"\breasoning_summary\b",
+    r"\bexecuting search\b",
+    r"\bexecuting action\b",
+    r"\baction is\b",
+    r"\bgemini\b",
+    r"\bllm\b",
+    r"\bapi key\b",
+    r"\bcircuit breaker\b",
+    r"\bdatabase\b",
+    r"\bobjectid\b",
+    r"\bunauthorized action\b",
+    r"\bunrecoverable\b",
+    r"\bsystem prompt\b",
+    r"\bchain-of-thought\b",
+    r"\basked clarification question\b",
+    r"\bretrieved details for\b",
+    r"\bstock check:\b",
+    r"\bcart items:\b",
+    r"\bcart has\b",
+    r"\bpolicy denied\b",
+]
+
+
+def sanitize_user_response(
+    message: Optional[str],
+    default_fallback: str = "How else can I assist with your shopping today?",
+) -> str:
+    """
+    Sanitize user-facing messages to ensure NO internal agent reasoning,
+    implementation details, state names, node names, or system instructions
+    are exposed to customers.
+    """
+    if not message or not isinstance(message, str) or not message.strip():
+        return default_fallback
+
+    msg_lower = message.lower().strip()
+
+    # Check for internal system patterns
+    has_internal_text = any(re.search(pat, msg_lower) for pat in INTERNAL_SYSTEM_PATTERNS)
+
+    if has_internal_text:
+        if "reiterated" in msg_lower or "goal" in msg_lower or "existing results" in msg_lower:
+            return "Sure. Here are the current matches again."
+        if "clarification" in msg_lower or "insufficient" in msg_lower:
+            return "Could you please clarify your shopping preferences?"
+        if "policy" in msg_lower or "denied" in msg_lower or "unauthorized" in msg_lower:
+            return "I cannot perform that action directly."
+        if "error" in msg_lower or "failed" in msg_lower or "circuit" in msg_lower or "exception" in msg_lower:
+            return "Sorry, I couldn't process that request right now. Please try again."
+        return default_fallback
+
+    return message.strip()

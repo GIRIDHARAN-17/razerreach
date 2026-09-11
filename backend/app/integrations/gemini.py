@@ -41,7 +41,7 @@ async def extract_search_intent(
         prompt += f"Previous intent context: {previous_intent.model_dump_json(exclude_none=True)}\n"
         prompt += "Refine the previous intent with the new query constraints.\n"
 
-    prompt += "\nRespond with a JSON object containing keys: search_text, category, color, brand, min_price, max_price, required_features (array of strings), sort (one of 'relevance', 'price_low', 'price_high')."
+    prompt += "\nRespond with a JSON object containing keys: search_text, category, color, brand, min_price, max_price, required_features (array of strings), sort (one of 'relevance', 'price_low', 'price_high'), intent_relation (one of 'REFINEMENT', 'NEW_INTENT', 'AMBIGUOUS')."
 
     def _call_gemini_intent_sync():
         try:
@@ -69,6 +69,8 @@ async def extract_search_intent(
     from app.services.ai_resilience import (
         execute_with_resilience,
         deterministic_search_intent,
+        classify_intent_relation,
+        merge_search_intent,
         circuit_breaker,
         CircuitState,
         AIFailureType,
@@ -103,7 +105,11 @@ async def extract_search_intent(
         cleaned_json = cleaned_json.strip()
 
         data = json.loads(cleaned_json)
-        return SearchIntent(**data)
+        raw_intent = SearchIntent(**data)
+        if previous_intent:
+            relation = classify_intent_relation(message, previous_intent)
+            return merge_search_intent(previous_intent, raw_intent, relation)
+        return raw_intent
     except Exception as e:
         logger.warning(f"Failed to parse Gemini structured JSON: {type(e).__name__}, using deterministic fallback.")
         return deterministic_search_intent(message, previous_intent)

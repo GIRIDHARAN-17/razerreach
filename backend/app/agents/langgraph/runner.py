@@ -60,7 +60,8 @@ async def run_langgraph_buyer_turn(
         or (f"Found {len(recommended_products)} products." if recommended_products else "How else can I help?")
     )
 
-    from app.services.ai_resilience import is_fallback_used, get_turn_failure_type
+    from app.services.ai_resilience import is_fallback_used, get_turn_failure_type, sanitize_user_response
+    final_message = sanitize_user_response(final_message)
     from app.services.audit_service import record_audit_event
     from app.schemas.audit import AuditAction, AuditResourceType
 

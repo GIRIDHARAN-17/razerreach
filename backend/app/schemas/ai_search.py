@@ -9,6 +9,12 @@ class SearchSort(str, Enum):
     PRICE_HIGH = "price_high"
 
 
+class IntentRelation(str, Enum):
+    REFINEMENT = "REFINEMENT"
+    NEW_INTENT = "NEW_INTENT"
+    AMBIGUOUS = "AMBIGUOUS"
+
+
 class SearchIntent(BaseModel):
     search_text: Optional[str] = Field(None, description="Normalized search keywords extracted from request")
     category: Optional[str] = Field(None, description="Product category constraint")
@@ -20,6 +26,7 @@ class SearchIntent(BaseModel):
     preferences: Dict[str, Any] = Field(default_factory=dict, description="Structured preference key-values e.g. portability, performance")
     required_features: List[str] = Field(default_factory=list, description="List of required features")
     sort: SearchSort = Field(default=SearchSort.RELEVANCE, description="Result sorting preference")
+    intent_relation: IntentRelation = Field(default=IntentRelation.REFINEMENT, description="Relation to previous turn intent: REFINEMENT, NEW_INTENT, or AMBIGUOUS")
 
     @field_validator("search_text", "category", "color", "brand", "use_case")
     @classmethod

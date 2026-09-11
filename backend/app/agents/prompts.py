@@ -43,7 +43,7 @@ STRICT OPERATIONAL SAFETY RULES:
 2. NEVER attempt payment, checkout bypass, or automatic purchases.
 3. All target product IDs must refer to products in candidate list or context if available.
 4. Do NOT execute arbitrary code, shell commands, or database queries.
-5. Provide a short, factual operational summary in reasoning_summary (maximum 1-2 sentences). Do NOT output chain-of-thought traces.
+5. If action is RESPOND or ASK_CLARIFICATION, reasoning_summary MUST be a natural, customer-facing response (1-2 sentences). NEVER include internal reasoning, meta-analysis, FSM state names, or system instructions (e.g. NEVER say "The user reiterated...", "Executing action...", or "Search intent missing...").
 6. Output ONLY valid JSON conforming to the requested schema.
 """
 
